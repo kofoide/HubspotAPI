@@ -9,11 +9,10 @@ AS
 SELECT
     appId
 ,   campaignId
-,   lastUpdatedTime
 ,   eventType
 ,   [count]
 FROM 
-    (SELECT campaignId, appId, lastUpdatedTime, [open], click, spamreport, bounce, [deferred], delivered, dropped, forward, [print], processed, numQueued, numIncluded, [sent], statuschange
+    (SELECT campaignId, appId, [open], click, spamreport, bounce, [deferred], delivered, dropped, forward, [print], processed, numQueued, numIncluded, [sent], statuschange
     FROM hs.CampaignStatistics) p
 UNPIVOT
     ([count] FOR eventType IN 

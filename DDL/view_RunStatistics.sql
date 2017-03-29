@@ -11,13 +11,10 @@ SELECT
 ,   N.campaignId
 ,   N.eventType
 ,   ISNULL(O.lastUpdatedTime, 0) AS lastUpdatedTime
-,   N.[count] - ISNULL(O.countStats, 0) AS ExpectingAtLeast
+,   N.[count] - ISNULL(O.countActual, 0) AS ExpectingAtLeast
 FROM
             hs.UnpivotCampaignStatistics    N
 LEFT JOIN   hs.MaxEvent                     O   ON  N.campaignId = O.campaignId
                                                 AND N.appId = O.appId
                                                 AND N.eventType = O.eventType
-WHERE
-    N.lastUpdatedTime > ISNULL(O.lastUpdatedTime, 0)
-AND N.[count] > 0
 GO
