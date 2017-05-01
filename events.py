@@ -6,6 +6,8 @@ import time
 import pandas as pd
 import requests
 import globvars
+import sqlalchemy
+import pyodbc as odbc
 
 
 # parse Single Event into dictionary from json received from Hubspot
@@ -81,21 +83,21 @@ def parse_single_event(eventrow):
     # Get specific eventType for a sepcific campaign after defined time
 
 
-def get_events_since(meta_engine, baseurl, firstparm, app, campaign, since, event, identity, noisy=False):
+def download_campaigneventtypesince(app, campaign, since, event, identity):
     """
     Text
     """
-
+    meta_engine = sqlalchemy.create_engine(globvars.dsnalchemy)
     campeventurl = "/email/public/v1/events"
     appod = "&appId=" + str(app)
     campid = "&campaignId=" + str(campaign)
     timesince = "&startTimestamp=" + str(since)
     event = "&eventType=" + event
 
-    url = baseurl + campeventurl + firstparm + appod + campid + timesince + event
+    url = globvars.baseurl + campeventurl + globvars.firstparm + appod + campid + timesince + event
     req = requests.get(url)
 
-    # callcount = 1
+    callcount = 1
     result = req.json()['events']
 
     events = []
@@ -103,15 +105,15 @@ def get_events_since(meta_engine, baseurl, firstparm, app, campaign, since, even
         events = events + [parse_single_event(event)]
 
     # Put events in Database
-    if len(events) > 0:
+    if events.count > 0:
         dataframe = pd.DataFrame.from_dict(events, orient='columns', dtype=None)
         dataframe['RunID'] = identity
 
         dataframe.to_sql(name="EmailEventTemp", con=meta_engine, schema="hs",
-                         index=False, if_exists='append', dtype=globvars.COLUMNSEMAILEVENTS)
+                         index=False, if_exists='append',
+                         dtype=globvars.COLUMNSEMAILEVENTS)
 
     eventcount = len(events)
-    callcount = 0
 
     # Subsequent calls to get rest of campaigns
     while req.json()['hasMore']:
@@ -132,23 +134,21 @@ def get_events_since(meta_engine, baseurl, firstparm, app, campaign, since, even
             events = events + [parse_single_event(event)]
 
         # Put events in Database
-        if len(events) > 0:
+        if events.count > 0:
             dataframe = pd.DataFrame.from_dict(events, orient='columns', dtype=None)
             dataframe['RunID'] = identity
 
-            dataframe.to_sql(name="EmailEventTemp"
-                        , con=meta_engine
-                        , schema="hs"
-                        , index=False
-                        , if_exists='append'
-                        , dtype=globvars.COLUMNSEMAILEVENTS)
+            dataframe.to_sql(
+                name="EmailEventTemp", con=meta_engine,
+                schema="hs", index=False, if_exists='append',
+                dtype=globvars.COLUMNSEMAILEVENTS)
 
             eventcount = eventcount + len(events)
 
     return callcount, eventcount
 
 
-def get_new_events(baseurl, firstparm, curs, meta_engine, eventtype, identity):
+def get_campaigneventtype(curs, meta_engine, eventtype, identity):
     """
     Text
     """
@@ -161,21 +161,79 @@ def get_new_events(baseurl, firstparm, curs, meta_engine, eventtype, identity):
 
     # loop through the campaigns for this eventType
     for index, row in campaigns.iterrows():
-        numcalls, eventcount = get_events_since(meta_engine, baseurl, firstparm, row['appId']
-                                                    , row['campaignId']
-                                                    , row['lastUpdatedTime']
-                                                    , row['eventType']
-                                                    , identity)
+        numcalls, eventcount = download_campaigneventtypesince(
+            meta_engine, row['appId'], row['campaignId'],
+            row['lastUpdatedTime'],
+            row['eventType'], identity
+        )
 
-        output = "appId:%s\tcampaignId:%s\t%s:%s\texpected:%s\tcalls:%s" % (row['appId']
-                                                                              , row['campaignId']
-                                                                              , row['eventType']
-                                                                              , eventcount
-                                                                              , row['ExpectingAtLeast']
-                                                                              , numcalls)
+        output = "appId:%s\tcampaignId:%s\t%s:%s\texpected:%s\tcalls:%s" % (
+            row['appId'], row['campaignId'], row['eventType'],
+            eventcount, row['ExpectingAtLeast'], numcalls)
+
         print output
 
         #runningCallCount = runningCallCount + numCalls
         #totalEventCount = totalEventCount + eventCount
 
     curs.execute("EXEC hs.FinalizeEvent ?", eventtype)
+
+
+def get_campaign_eventtypes(appid, campaignid, eventtype, identity):
+    """
+    TextDownl
+    """
+    conn = odbc.connect(globvars.dsnpyodbc, autocommit=True)
+    curs = conn.cursor()
+
+    curs.execute("TRUNCATE TABLE hs.EmailEventTemp")
+
+    sql = """
+    SELECT lastUpdatedTime, ExpectingAtLeast
+    FROM hs.RunStatistics 
+    WHERE appId = %s 
+    AND campaignId = %s 
+    AND eventType = '%s'""" % (appid, campaignid, eventtype)
+
+    result = curs.execute(sql).fetchone()
+    lastupdated = result[0]
+    expecting = result[1]
+
+    numcalls, eventcount = download_campaigneventtypesince(appid, campaignid, lastupdated, eventtype, identity)
+
+    output = "appId:%s\tcampaignId:%s\t%s:%s\texpected:%s\tcalls:%s" % (
+        appid, campaignid, eventtype, eventcount, expecting, numcalls)
+
+    print output
+
+        #runningCallCount = runningCallCount + numCalls
+        #totalEventCount = totalEventCount + eventCount
+
+    curs.execute("EXEC hs.Finalize")
+
+def get_campaign_allevents(appid, campaignid, identity):
+    """
+    TextDownl
+    """
+    #loop through the event types
+    conn = odbc.connect(globvars.dsnpyodbc, autocommit=True)
+    curs = conn.cursor()
+    sql = "SELECT * FROM hs.EventType"
+    result = curs.execute(sql).fetchall()
+
+    for row in result:
+        get_campaign_eventtypes(appid, campaignid, row[0], identity)
+
+def get_everything(identity):
+    """
+    TextDownl
+    """
+    #loop through the campaigns
+    conn = odbc.connect(globvars.dsnpyodbc, autocommit=True)
+    curs = conn.cursor()
+    sql = "SELECT appId, campaignId FROM hs.CampaignStatistics"
+    result = curs.execute(sql).fetchall()
+
+    for row in result:
+        get_campaign_allevents(row[0], row[1], identity)
+        

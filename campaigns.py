@@ -5,14 +5,16 @@ Text
 import time
 import json
 import requests
-import functions
+import globvars
+import pandas as pd
+import sqlalchemy
 
 
-def parse_single_campaignstats(campaign):
-
-
+def parse_single_campaign(campaign):
     """
-    Text
+    Receives the json from the Campaign Statistics API call result
+
+    Returns parsed dictionary of campaign statistics
     """
 
     row = {}
@@ -139,81 +141,87 @@ def parse_single_campaignstats(campaign):
 
     # Get base campaigns
 
-def get_single_campaignstats(baseurl, apikey, camp, noisy=False):
+def download_single_campaignstats(camp, noisy=False):
     """
-    Text
-    """
+    Makes call to Campaign Statistics API for a specific campaign
 
+    Returns dictionary of the campaign statistics
+    """
+    # API endpoint
     campstaturl = "/email/public/v1/campaigns/" + str(camp['id'])
     appid = "&appId=" + str(camp['appId'])
-
-    url = baseurl + campstaturl + apikey + appid
-
+    # API URL
+    url = globvars.baseurl + campstaturl + globvars.apikey + appid
+    # Go Get em...
     req = requests.get(url)
-    result = req.json()
-    # js['lastUpdatedTime'] = camp['lastUpdatedTime']
+    campaign = req.json()
 
-    parsedcampaign = parse_single_campaignstats(result)
+    parsedcampaign = parse_single_campaign(campaign)
     if noisy:
         print "Getting Statistics for " + parsedcampaign['campaignName']
 
     return parsedcampaign
 
-def get_all_campaignslist(baseurl, firstparm, noisy=False):
+def download_campaign_list(noisy=False):
     """
-    Text
+    Gets a list of campaigns
     """
-
+    # API endpoint
     campsurl = "/email/public/v1/campaigns/by-id"
-
-    url = baseurl + campsurl + firstparm
-    if noisy:
-        print url
-    req = requests.get(url)
+    # API URL
+    url = globvars.baseurl + campsurl + globvars.firstparm
 
     callcount = 1
-    resultdict = req.json()['campaigns']
+    req = requests.get(url)
+    campaigndict = req.json()['campaigns']
 
-    with open('data.json', 'w') as outfile:
-        if noisy:
-            print 'dumping file'
-        json.dump(req.json(), outfile)
+    if noisy:
+        with open('data.json', 'w') as outfile:
+            print url
+            json.dump(req.json(), outfile)
 
-    # Subsequent calls to get rest of campaigns
+    # Are there more to get?
     while req.json()['hasMore']:
         if noisy:
-            print 'Campaign List has more.'
+            print 'There are more to get...'
 
+        # Slow down trigger...
         if (callcount % 10) == 0:
             time.sleep(1)
 
+        #Get the offset parameter
         offset = req.json()['offset']
+        # API URL
         nexturl = url + "&offset=" + offset
-
-        req = requests.get(nexturl)
-
+        # Go get em...
         callcount = callcount + 1
-        resultdict = resultdict + req.json()['campaigns']
+        req = requests.get(nexturl)
+        campaigndict = campaigndict + req.json()['campaigns']
 
     if noisy:
         print "Campaign List Call Count: " + str(callcount)
 
-    return resultdict, callcount
+    return campaigndict, callcount
 
 
-def get_all_campaignsstats(baseurl, apikey, firstparm, noisy=False):
+def get_all_campaignstats(noisy=False):
     """
     Text
     """
 
     camps = []
-
-    campaigns, callcount = get_all_campaignslist(baseurl, firstparm, noisy)
+    # First get the list of campaigns
+    campaigns, callcount = download_campaign_list(noisy)
 
     if noisy:
         print "Number of Campaigns: " + str(len(campaigns))
 
+    # Get the stats about each campaign
     for camp in campaigns:
-        camps = camps + [get_single_campaignstats(baseurl, apikey, camp)]
+        camps = camps + [download_single_campaignstats(camp)]
 
-    return callcount, camps
+    # put them in database
+    meta_engine = sqlalchemy.create_engine(globvars.dsnalchemy)
+    pd.DataFrame.from_dict(camps, orient='columns', dtype=None).to_sql(name="CampaignStatistics", schema="hs", con=meta_engine, index=False, if_exists="replace", dtype=globvars.COLUMNSCAMPAIGNSTATISTICS)
+
+    return callcount

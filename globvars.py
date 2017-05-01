@@ -1,9 +1,28 @@
 """
-Text
+Global Variables
 """
 
+import configparser
 import sqlalchemy
 
+
+parser = configparser.ConfigParser()
+
+#if os.name == "posix":
+#    parser.read(u'../config.ini')
+#else:
+#    parser.read(u"..\config.ini")
+
+parser.read(u'../config.ini')
+
+key = parser.get('Hubspot', 'APIKEY')
+apikey = "?hapikey=" + key
+limit = "&limit=1000"
+firstparm = apikey + limit
+baseurl = "https://api.hubapi.com"
+runningcallcount = 0
+dsnalchemy = parser.get('Database', 'HubspotSqlAlc')
+dsnpyodbc = parser.get('Database', 'HubspotPy')
 
 COLUMNSCAMPAIGNSTATISTICS = {
     'appId': sqlalchemy.types.INTEGER(),
